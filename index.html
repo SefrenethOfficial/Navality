@@ -30,7 +30,17 @@
             <li><b>Mouse</b> look</li>
             <li><b>Shift</b> sprint</li>
             <li><b>Space</b> jump</li>
-            <li><b>E</b> board boat</li>
+            <li><b>E</b> board boat / plane</li>
+          </ul>
+        </div>
+        <div>
+          <h2>Flying</h2>
+          <ul>
+            <li><b>R / F</b> throttle up / down</li>
+            <li><b>S / W</b> nose up / down</li>
+            <li><b>A / D</b> bank (steer on water)</li>
+            <li><b>Mouse</b> look around</li>
+            <li><b>E</b> get out (on water)</li>
           </ul>
         </div>
         <div>
@@ -52,6 +62,16 @@
   <div id="crosshair"></div>
   <div id="hud"></div>
   <div id="prompt" class="hidden"></div>
+
+  <div id="flighthud" class="hidden">
+    <div class="stats">
+      <div><span class="label">Speed</span> <span id="airspeed">0 kn</span></div>
+      <div><span class="label">Alt</span> <span id="altitude">0 m</span></div>
+      <div><span class="label">Power</span> <span id="throttle">0%</span></div>
+      <div class="bar"><div id="throttle-bar"></div></div>
+      <div id="flight-warn"></div>
+    </div>
+  </div>
 
   <div id="sailhud" class="hidden">
     <div class="compass">

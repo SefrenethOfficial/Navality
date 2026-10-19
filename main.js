@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { createWater } from './water.js';
 import { SailBoat } from './boat.js';
+import { Seaplane } from './plane.js';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -325,7 +326,7 @@ lighthouse.add(lampLight);
 
 lighthouse.position.set(LH.x, 0, LH.z);
 scene.add(lighthouse);
-circleColliders.push({ x: LH.x, z: LH.z, r: rBottom + 0.1 });
+circleColliders.push({ x: LH.x, z: LH.z, r: rBottom + 0.1, h: topY + 4.5 });
 
 // ---------------------------------------------------------------------------
 // Trees
@@ -350,7 +351,7 @@ function addTree(x, z) {
   tree.rotation.y = rand() * Math.PI;
   tree.position.set(x, 0, z);
   scene.add(tree);
-  circleColliders.push({ x, z, r: 0.45 * scale });
+  circleColliders.push({ x, z, r: 0.45 * scale, h: 8.5 * scale });
 }
 
 let placed = 0, attempts = 0;
@@ -415,6 +416,26 @@ function updateWind(t) {
 }
 
 // ---------------------------------------------------------------------------
+// Seaplane
+// ---------------------------------------------------------------------------
+/** Would a plane at x, y, z hit something solid? (wings ~5.5 m each side) */
+function hitsObstacle(x, y, z) {
+  const WING = 5;
+  for (const c of circleColliders) {
+    if (y < c.h && Math.hypot(x - c.x, z - c.z) < c.r + WING) return true;
+  }
+  if (y < 1.5 && x > DOCK.minX - WING && x < DOCK.maxX + WING && z > DOCK.minZ - WING && z < DOCK.maxZ + WING) return true;
+  if (y < WATER_LEVEL + 9 && Math.hypot(x - boat.x, z - boat.z) < 4.5 + WING) return true;
+  return false;
+}
+
+const plane = new Seaplane({
+  x: -9.5, z: 76, heading: 0,
+  waterLevel: WATER_LEVEL, mat, isOpenWater, groundHeight: terrainHeight, hitsObstacle,
+});
+scene.add(plane.mesh);
+
+// ---------------------------------------------------------------------------
 // Collision / walkable area
 // ---------------------------------------------------------------------------
 function isWalkable(x, z) {
@@ -443,28 +464,36 @@ const canStand = (x, z) => isWalkable(x, z) && !collides(x, z);
 // Controls
 // ---------------------------------------------------------------------------
 const controls = new PointerLockControls(camera, document.body);
-const overlay = document.getElementById('overlay');
-const hud = document.getElementById('hud');
-const promptEl = document.getElementById('prompt');
-const sailHud = document.getElementById('sailhud');
-const windArrow = document.getElementById('wind-arrow');
-const speedEl = document.getElementById('speed');
-const sailEl = document.getElementById('sail');
-const trimEl = document.getElementById('trim');
-const crosshair = document.getElementById('crosshair');
+const $ = (id) => document.getElementById(id);
+const overlay = $('overlay');
+const hud = $('hud');
+const promptEl = $('prompt');
+const crosshair = $('crosshair');
+const sailHud = $('sailhud');
+const windArrow = $('wind-arrow');
+const speedEl = $('speed');
+const sailEl = $('sail');
+const trimEl = $('trim');
+const flightHud = $('flighthud');
+const airspeedEl = $('airspeed');
+const altitudeEl = $('altitude');
+const throttleEl = $('throttle');
+const throttleBar = $('throttle-bar');
+const flightWarnEl = $('flight-warn');
 
 overlay.addEventListener('click', () => controls.lock());
 controls.addEventListener('lock', () => overlay.classList.add('hidden'));
 controls.addEventListener('unlock', () => overlay.classList.remove('hidden'));
 
-let mode = 'walk'; // 'walk' or 'sail'
+let mode = 'walk'; // 'walk', 'sail' or 'fly'
 const keys = {};
 let velocityY = 0;
 let onGround = true;
 
-// Chase camera (used while sailing)
+// Chase camera (used in the boat and the plane)
 const chase = { yaw: 0, pitch: 0.32, dist: 18 };
 const camTarget = new THREE.Vector3();
+const camLook = new THREE.Vector3();
 
 window.addEventListener('keydown', (e) => {
   keys[e.code] = true;
@@ -474,45 +503,60 @@ window.addEventListener('keydown', (e) => {
     onGround = false;
   }
   if (e.code === 'KeyE' && !e.repeat) {
-    if (mode === 'walk' && nearBoat()) board();
-    else if (mode === 'sail') disembark();
+    if (mode === 'walk') {
+      const v = nearestVehicle();
+      if (v === 'plane') enterPlane();
+      else if (v === 'boat') enterBoat();
+    } else {
+      leaveVehicle();
+    }
   }
 });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
 document.addEventListener('mousemove', (e) => {
-  if (mode !== 'sail' || !controls.isLocked) return;
+  if (mode === 'walk' || !controls.isLocked) return;
   chase.yaw -= e.movementX * 0.003;
-  chase.pitch = THREE.MathUtils.clamp(chase.pitch + e.movementY * 0.003, 0.05, 1.3);
+  chase.pitch = THREE.MathUtils.clamp(chase.pitch + e.movementY * 0.003, -0.4, 1.3);
 });
 document.addEventListener('wheel', (e) => {
-  if (mode !== 'sail') return;
-  chase.dist = THREE.MathUtils.clamp(chase.dist + e.deltaY * 0.02, 9, 40);
+  if (mode === 'walk') return;
+  chase.dist = THREE.MathUtils.clamp(chase.dist + e.deltaY * 0.02, 9, 60);
 });
 
 // ---------------------------------------------------------------------------
-// Boarding / going ashore
+// Getting in and out of vehicles
 // ---------------------------------------------------------------------------
 let messageUntil = 0;
 let message = '';
-function flash(text, seconds = 2) {
+function flash(text, seconds = 2.5) {
   message = text;
   messageUntil = performance.now() + seconds * 1000;
 }
 
-function nearBoat() {
+/** 'boat', 'plane' or null, whichever is in reach (closest wins). */
+function nearestVehicle() {
   const p = camera.position;
-  return Math.hypot(p.x - boat.x, p.z - boat.z) < 7;
+  const dBoat = Math.hypot(p.x - boat.x, p.z - boat.z);
+  const dPlane = plane.onWater ? Math.hypot(p.x - plane.x, p.z - plane.z) : Infinity;
+  if (dPlane < 9 && dPlane <= dBoat) return 'plane';
+  if (dBoat < 7) return 'boat';
+  return null;
 }
 
-function board() {
-  mode = 'sail';
+function enterVehicle(newMode, dist) {
+  mode = newMode;
   controls.enabled = false;
   chase.yaw = 0;
-  chase.pitch = 0.32;
-  sailHud.classList.remove('hidden');
+  chase.pitch = newMode === 'fly' ? 0.2 : 0.32;
+  chase.dist = dist;
   crosshair.classList.add('hidden');
+  sailHud.classList.toggle('hidden', newMode !== 'sail');
+  flightHud.classList.toggle('hidden', newMode !== 'fly');
 }
+const enterBoat = () => enterVehicle('sail', 18);
+const enterPlane = () => enterVehicle('fly', 24);
 
 /** Closest spot on land (island or dock) the player could stand, or null. */
 function nearestLanding(x, z) {
@@ -529,22 +573,40 @@ function nearestLanding(x, z) {
     const d = Math.hypot(c.x - x, c.z - z);
     if (d < bestDist && canStand(c.x, c.z)) { best = c; bestDist = d; }
   }
-  return best && bestDist < 15 ? best : null;
+  return best && bestDist < 16 ? best : null;
 }
 
-function disembark() {
-  const spot = nearestLanding(boat.x, boat.z);
-  if (!spot) {
-    flash('Too far from land. Sail closer to the dock or beach.');
-    return;
-  }
+function canLeave() {
+  if (mode === 'fly' && (!plane.onWater || Math.abs(plane.speed) > 4)) return null;
+  const v = mode === 'fly' ? plane : boat;
+  return nearestLanding(v.x, v.z);
+}
+
+function goAshore(spot, lookAt) {
   mode = 'walk';
   controls.enabled = true;
   sailHud.classList.add('hidden');
+  flightHud.classList.add('hidden');
   crosshair.classList.remove('hidden');
   velocityY = 0;
   camera.position.set(spot.x, EYE_HEIGHT, spot.z);
-  camera.lookAt(boat.x, EYE_HEIGHT, boat.z);
+  camera.lookAt(lookAt.x, EYE_HEIGHT, lookAt.z);
+}
+
+function leaveVehicle() {
+  if (mode === 'fly' && !plane.onWater) { flash("You can't jump out mid-air! Land on the water first."); return; }
+  if (mode === 'fly' && Math.abs(plane.speed) > 4) { flash('Slow down first (F to cut the throttle).'); return; }
+  const spot = canLeave();
+  if (!spot) { flash('Too far from land. Get closer to the dock or beach.'); return; }
+  goAshore(spot, mode === 'fly' ? plane : boat);
+}
+
+function onPlaneCrash() {
+  flash('You crashed! The seaplane has been towed back to the dock.', 3.5);
+  if (mode === 'fly') {
+    const spot = nearestLanding(plane.x, plane.z) || { x: 0, z: DOCK.minZ + 10 };
+    goAshore(spot, plane);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -586,26 +648,39 @@ function updatePlayer(dt) {
 }
 
 // ---------------------------------------------------------------------------
-// Sailing
+// Vehicle input, camera and HUDs
 // ---------------------------------------------------------------------------
+const axis = (pos, neg) => (pos.some((k) => keys[k]) ? 1 : 0) - (neg.some((k) => keys[k]) ? 1 : 0);
+
 function sailInput() {
   if (mode !== 'sail' || !controls.isLocked) return null;
   return {
-    sail: (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0),
-    steer: (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0),
+    sail: axis(['KeyW', 'ArrowUp'], ['KeyS', 'ArrowDown']),
+    steer: axis(['KeyA', 'ArrowLeft'], ['KeyD', 'ArrowRight']),
   };
 }
 
-function updateChaseCamera(dt) {
-  const yaw = boat.heading + chase.yaw;
+function flightInput() {
+  if (mode !== 'fly' || !controls.isLocked) return null;
+  return {
+    pitch: axis(['KeyS', 'ArrowDown'], ['KeyW', 'ArrowUp']), // W = nose down, like pushing a stick
+    roll: axis(['KeyD', 'ArrowRight'], ['KeyA', 'ArrowLeft']),
+    throttle: axis(['KeyR', 'ShiftLeft', 'ShiftRight'], ['KeyF']),
+  };
+}
+
+function updateChaseCamera(dt, x, y, z, heading, lookHeight) {
+  const yaw = heading + chase.yaw;
   const horiz = Math.cos(chase.pitch) * chase.dist;
   camTarget.set(
-    boat.x - Math.sin(yaw) * horiz,
-    WATER_LEVEL + 2 + Math.sin(chase.pitch) * chase.dist,
-    boat.z - Math.cos(yaw) * horiz
+    x - Math.sin(yaw) * horiz,
+    y + 2 + Math.sin(chase.pitch) * chase.dist,
+    z - Math.cos(yaw) * horiz
   );
+  camTarget.y = Math.max(camTarget.y, WATER_LEVEL + 1); // never dip under the sea
   camera.position.lerp(camTarget, Math.min(1, dt * 5));
-  camera.lookAt(boat.x, WATER_LEVEL + 3, boat.z);
+  camLook.set(x, y + lookHeight, z);
+  camera.lookAt(camLook);
 }
 
 function updateSailHud() {
@@ -616,6 +691,23 @@ function updateSailHud() {
   sailEl.textContent = `${Math.round(boat.sailLevel * 100)}%`;
   const e = boat.efficiency;
   trimEl.textContent = e < 0.05 ? 'In irons (too close to the wind)' : e > 0.9 ? 'Great angle' : e > 0.75 ? 'Good angle' : 'Weak angle';
+}
+
+function updateFlightHud() {
+  airspeedEl.textContent = `${(Math.max(plane.speed, 0) * 1.944).toFixed(0)} kn`;
+  altitudeEl.textContent = `${Math.max(plane.altitude - 1.9, 0).toFixed(0)} m`;
+  throttleEl.textContent = `${Math.round(plane.throttle * 100)}%`;
+  throttleBar.style.width = `${plane.throttle * 100}%`;
+  let warn = '';
+  if (plane.onWater) {
+    warn = plane.speed < 20 ? 'On the water. R for throttle, then S to lift off at speed' : 'Fast enough: hold S to take off';
+  } else if (plane.stalling) {
+    warn = 'STALL! Lower the nose (W) and add throttle';
+  } else if (plane.altitude < 15 && plane.forward().y < -0.3) {
+    warn = 'PULL UP! Too steep to land';
+  }
+  flightWarnEl.textContent = warn;
+  flightWarnEl.classList.toggle('danger', !plane.onWater && warn !== '');
 }
 
 // ---------------------------------------------------------------------------
@@ -641,27 +733,34 @@ function animate(now) {
   water.update(t);
   updateWind(t);
   boat.update(dt, t, wind, sailInput());
+  if (plane.update(dt, t, flightInput()) === 'crash') onPlaneCrash();
 
   if (mode === 'walk') {
     updatePlayer(dt);
-  } else {
-    updateChaseCamera(dt);
+  } else if (mode === 'sail') {
+    updateChaseCamera(dt, boat.x, WATER_LEVEL, boat.z, boat.heading, 3);
     updateSailHud();
+  } else {
+    updateChaseCamera(dt, plane.x, plane.position.y, plane.z, plane.yaw, 1);
+    updateFlightHud();
   }
   sky.position.copy(camera.position);
 
   // Interaction prompt
   let promptText = '';
   if (now < messageUntil) promptText = message;
-  else if (mode === 'walk' && nearBoat()) promptText = 'Press E to board';
-  else if (mode === 'sail' && nearestLanding(boat.x, boat.z)) promptText = 'Press E to go ashore';
+  else if (mode === 'walk') {
+    const v = nearestVehicle();
+    if (v === 'plane') promptText = 'Press E to fly the seaplane';
+    else if (v === 'boat') promptText = 'Press E to board';
+  } else if (canLeave()) promptText = 'Press E to go ashore';
   promptEl.textContent = promptText;
   promptEl.classList.toggle('hidden', !promptText || !controls.isLocked);
 
   // Slowly pulse the lighthouse lamp
   lampLight.intensity = 30 + Math.sin(t * 2) * 15;
 
-  const p = mode === 'walk' ? camera.position : boat;
+  const p = mode === 'walk' ? camera.position : mode === 'sail' ? boat : plane;
   hud.textContent = `x ${p.x.toFixed(1)}  z ${p.z.toFixed(1)}`;
 
   renderer.render(scene, camera);

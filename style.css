@@ -77,7 +77,7 @@ canvas { display: block; }
   pointer-events: none;
 }
 
-#sailhud {
+#sailhud, #flighthud {
   position: fixed;
   right: 16px;
   bottom: 16px;
@@ -133,6 +133,13 @@ canvas { display: block; }
   border-right: 8px solid transparent;
   border-bottom: 12px solid #8fc9ec;
 }
-#sailhud .stats { font-size: 14px; line-height: 1.6; min-width: 150px; }
-#sailhud .label { opacity: 0.6; display: inline-block; width: 46px; }
+#sailhud .stats, #flighthud .stats { font-size: 14px; line-height: 1.6; min-width: 150px; }
+#sailhud .label, #flighthud .label { opacity: 0.6; display: inline-block; width: 50px; }
 #trim { font-size: 12px; color: #ffd27a; }
+
+#flighthud .stats { width: 220px; }
+#flighthud .bar { height: 6px; margin: 2px 0 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.15); overflow: hidden; }
+#throttle-bar { height: 100%; width: 0; background: #ffd27a; }
+#flight-warn { font-size: 12px; color: #8fc9ec; }
+#flight-warn.danger { color: #ff7b6b; font-weight: 600; }
+.panel .controls { gap: 28px; }
