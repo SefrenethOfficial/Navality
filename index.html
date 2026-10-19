@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Naval Game – Prototype</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- Load three.js from a CDN, no build step needed -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="overlay">
+    <div class="panel">
+      <h1>Harbour</h1>
+      <p class="sub">Naval game prototype</p>
+      <p class="start">Click to play</p>
+      <ul>
+        <li><b>W A S D</b> / arrows: move</li>
+        <li><b>Mouse</b>: look</li>
+        <li><b>Shift</b>: sprint</li>
+        <li><b>Space</b>: jump</li>
+        <li><b>Esc</b>: release mouse</li>
+      </ul>
+    </div>
+  </div>
+
+  <div id="crosshair"></div>
+  <div id="hud"></div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

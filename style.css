@@ -1,0 +1,59 @@
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0b1a26;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+canvas { display: block; }
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 20, 32, 0.55);
+  cursor: pointer;
+  z-index: 10;
+  transition: opacity 0.2s;
+}
+#overlay.hidden { opacity: 0; pointer-events: none; }
+
+.panel {
+  color: #eaf4fb;
+  text-align: center;
+  padding: 28px 40px;
+  border-radius: 14px;
+  background: rgba(10, 30, 48, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.panel h1 { margin: 0; font-size: 42px; letter-spacing: 2px; }
+.panel .sub { margin: 4px 0 18px; opacity: 0.7; }
+.panel .start { font-size: 20px; color: #ffd27a; margin: 0 0 14px; }
+.panel ul { list-style: none; padding: 0; margin: 0; line-height: 1.8; text-align: left; }
+
+#crosshair {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  pointer-events: none;
+}
+
+#hud {
+  position: fixed;
+  left: 12px;
+  bottom: 10px;
+  color: rgba(255, 255, 255, 0.8);
+  font: 12px ui-monospace, monospace;
+  text-shadow: 0 1px 2px #000;
+  pointer-events: none;
+}
