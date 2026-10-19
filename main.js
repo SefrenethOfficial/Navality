@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import { createWater, waveHeight } from './water.js';
 
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
-const ISLAND_RADIUS = 60;
+const WALK_RADIUS = 57;      // how far from the centre you can walk on the island
 const WATER_LEVEL = -1.2;
 const EYE_HEIGHT = 1.7;
 const PLAYER_RADIUS = 0.4;
@@ -15,6 +16,7 @@ const GRAVITY = 20;
 
 // Dock (walkable rectangle sticking out of the island)
 const DOCK = { minX: -3, maxX: 3, minZ: 50, maxZ: 95 };
+const LH = { x: -32, z: -30 }; // lighthouse position
 
 // ---------------------------------------------------------------------------
 // Renderer / scene / camera
@@ -25,29 +27,91 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
 document.body.appendChild(renderer.domElement);
 
-const scene = new THREE.Scene();
-const SKY = 0x8ec9ef;
-scene.background = new THREE.Color(SKY);
-scene.fog = new THREE.Fog(SKY, 90, 340);
+const SKY_TOP = new THREE.Color(0x2f7fd0);
+const SKY_HORIZON = new THREE.Color(0xcfe6f2);
 
-const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+const scene = new THREE.Scene();
+scene.background = SKY_HORIZON.clone();
+scene.fog = new THREE.Fog(SKY_HORIZON.clone(), 120, 430);
+
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1200);
 camera.position.set(0, EYE_HEIGHT, 25);
 camera.lookAt(0, EYE_HEIGHT, 80);
 
 // ---------------------------------------------------------------------------
-// Lighting
+// Lighting (low afternoon sun out over the harbour)
 // ---------------------------------------------------------------------------
-scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x5a4a32, 0.9));
+const SUN_DIR = new THREE.Vector3(40, 45, 120).normalize();
 
-const sun = new THREE.DirectionalLight(0xfff2d6, 2.2);
-sun.position.set(60, 90, 40);
+scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x6a5a3a, 0.85));
+
+const sun = new THREE.DirectionalLight(0xffe2b8, 2.6);
+sun.position.copy(SUN_DIR).multiplyScalar(140);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -100, right: 100, top: 100, bottom: -100, near: 10, far: 260 });
+Object.assign(sun.shadow.camera, { left: -90, right: 90, top: 90, bottom: -90, near: 10, far: 300 });
 sun.shadow.bias = -0.0005;
+sun.shadow.normalBias = 0.05;
 scene.add(sun);
+
+// ---------------------------------------------------------------------------
+// Sky dome
+// ---------------------------------------------------------------------------
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(500, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    uniforms: {
+      uTop: { value: SKY_TOP },
+      uHorizon: { value: SKY_HORIZON },
+      uSunDir: { value: SUN_DIR },
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vDir;
+      void main() {
+        vDir = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uTop, uHorizon, uSunDir;
+      varying vec3 vDir;
+      void main() {
+        vec3 d = normalize(vDir);
+        vec3 col = mix(uHorizon, uTop, pow(clamp(d.y, 0.0, 1.0), 0.6));
+        float s = max(dot(d, uSunDir), 0.0);
+        col += vec3(1.0, 0.85, 0.6) * (pow(s, 8.0) * 0.35 + pow(s, 1500.0) * 8.0);
+        gl_FragColor = vec4(col, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }
+    `,
+  })
+);
+sky.renderOrder = -1;
+scene.add(sky);
+
+// ---------------------------------------------------------------------------
+// Textures
+// ---------------------------------------------------------------------------
+const loader = new THREE.TextureLoader();
+const maxAniso = renderer.capabilities.getMaxAnisotropy();
+function loadTex(file, repeat = [1, 1]) {
+  const tex = loader.load(`textures/${file}`);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = maxAniso;
+  tex.repeat.set(repeat[0], repeat[1]);
+  return tex;
+}
+const grassTex = loadTex('grass.jpg');
+const dirtTex = loadTex('dirt.jpg');
+const sandTex = loadTex('sand.jpg');
+const leavesTex = loadTex('leaves.jpg', [3, 1.5]);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -76,54 +140,109 @@ function mulberry32(seed) {
 }
 const rand = mulberry32(1337);
 
-// ---------------------------------------------------------------------------
-// Island
-// ---------------------------------------------------------------------------
-const sand = shadowed(new THREE.Mesh(
-  new THREE.CylinderGeometry(ISLAND_RADIUS, ISLAND_RADIUS + 8, 6, 64),
-  mat(0xe3cf95)
-));
-sand.position.y = -3; // top surface at y = 0
-scene.add(sand);
-
-const grass = new THREE.Mesh(new THREE.CircleGeometry(ISLAND_RADIUS - 8, 64), mat(0x6fa84a));
-grass.rotation.x = -Math.PI / 2;
-grass.position.y = 0.02;
-grass.receiveShadow = true;
-scene.add(grass);
+function smoothstep(a, b, x) {
+  const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
+  return t * t * (3 - 2 * t);
+}
 
 // ---------------------------------------------------------------------------
-// Water (animated low-poly waves)
+// Island terrain: flat top, wobbly beach sloping into the sea.
+// Grass, dirt and sand are blended in the shader by position.
 // ---------------------------------------------------------------------------
-const waterGeo = new THREE.PlaneGeometry(800, 800, 120, 120);
-waterGeo.rotateX(-Math.PI / 2);
-const waterBase = waterGeo.attributes.position.array.slice();
-const water = new THREE.Mesh(
-  waterGeo,
-  new THREE.MeshStandardMaterial({
-    color: 0x1e6f9f, roughness: 0.3, metalness: 0.1,
-    transparent: true, opacity: 0.92, flatShading: true,
-  })
+function shoreStart(x, z) {
+  const a = Math.atan2(z, x);
+  return 62 + 2.5 * Math.sin(3 * a) + 1.5 * Math.sin(7 * a + 1);
+}
+function terrainHeight(x, z) {
+  const s = shoreStart(x, z);
+  return -3.5 * smoothstep(s, s + 12, Math.hypot(x, z));
+}
+
+const terrainGeo = new THREE.RingGeometry(0.001, 84, 200, 72);
+terrainGeo.rotateX(-Math.PI / 2);
+{
+  const pos = terrainGeo.attributes.position;
+  for (let i = 0; i < pos.count; i++) pos.setY(i, terrainHeight(pos.getX(i), pos.getZ(i)));
+  terrainGeo.computeVertexNormals();
+}
+
+const terrainMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95 });
+terrainMat.onBeforeCompile = (shader) => {
+  Object.assign(shader.uniforms, {
+    tGrass: { value: grassTex },
+    tDirt: { value: dirtTex },
+    tSand: { value: sandTex },
+    uLighthouse: { value: new THREE.Vector2(LH.x, LH.z) },
+  });
+
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vTerrainPos;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvTerrainPos = position;');
+
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', /* glsl */ `
+      #include <common>
+      uniform sampler2D tGrass, tDirt, tSand;
+      uniform vec2 uLighthouse;
+      varying vec3 vTerrainPos;
+      float thash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+      float tnoise(vec2 p) {
+        vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(thash(i), thash(i + vec2(1, 0)), u.x), mix(thash(i + vec2(0, 1)), thash(i + vec2(1, 1)), u.x), u.y);
+      }
+      float tfbm(vec2 p) { return 0.5 * tnoise(p) + 0.3 * tnoise(p * 2.1 + 7.3) + 0.2 * tnoise(p * 4.3 + 3.1); }
+    `)
+    .replace('#include <map_fragment>', /* glsl */ `
+      vec2 wp = vTerrainPos.xz;
+      float macro = tfbm(wp * 0.03);
+      float n = tfbm(wp * 0.15) * 2.0 - 1.0;
+
+      // Two scales of each texture hide the tiling
+      vec3 grass = mix(texture2D(tGrass, wp / 7.0).rgb, texture2D(tGrass, wp / 23.0 + 0.37).rgb, 0.35);
+      grass *= mix(0.82, 1.12, macro);
+      vec3 dirt = mix(texture2D(tDirt, wp / 5.0).rgb, texture2D(tDirt, wp / 17.0 + 0.5).rgb, 0.3) * 1.15;
+      vec3 sand = mix(texture2D(tSand, wp / 4.0).rgb, texture2D(tSand, wp / 13.0 + 0.5).rgb, 0.4);
+
+      // Beach ring follows the wobbly shoreline
+      float r = length(wp);
+      float ang = atan(wp.y, wp.x);
+      float shore = 62.0 + 2.5 * sin(3.0 * ang) + 1.5 * sin(7.0 * ang + 1.0);
+      float sandW = smoothstep(shore - 10.0, shore - 6.0, r + n * 2.5);
+
+      // Dirt: random patches, a winding path to the dock, ground around the lighthouse
+      float patches = smoothstep(0.6, 0.72, tfbm(wp * 0.04 + 17.0) + n * 0.04);
+      float pathX = wp.x - sin(wp.y * 0.12) * 2.2 * (1.0 - smoothstep(38.0, 52.0, wp.y));
+      float path = (1.0 - smoothstep(1.3, 2.6, abs(pathX) + n * 0.7)) * smoothstep(3.0, 8.0, wp.y);
+      float lh = 1.0 - smoothstep(4.5, 8.0, length(wp - uLighthouse) + n * 1.2);
+      float dirtW = clamp(max(max(patches, path), lh), 0.0, 1.0);
+
+      vec3 col = mix(grass, dirt, dirtW);
+      col = mix(col, sand, sandW);
+      col *= mix(1.0, 0.6, smoothstep(-0.7, -1.6, vTerrainPos.y)); // wet sand
+      diffuseColor.rgb *= col;
+    `);
+};
+
+const terrain = new THREE.Mesh(terrainGeo, terrainMat);
+terrain.receiveShadow = true;
+scene.add(terrain);
+
+// Sea floor beyond the island
+const seabedTex = loadTex('sand.jpg', [90, 90]);
+const seabed = new THREE.Mesh(
+  new THREE.CircleGeometry(460, 64),
+  new THREE.MeshStandardMaterial({ map: seabedTex, color: 0x9a9a9a, roughness: 1 })
 );
+seabed.rotation.x = -Math.PI / 2;
+seabed.position.y = -3.52;
+scene.add(seabed);
+
+// ---------------------------------------------------------------------------
+// Water
+// ---------------------------------------------------------------------------
+const water = createWater({ sunDir: SUN_DIR, skyTop: SKY_TOP, skyHorizon: SKY_HORIZON });
 water.position.y = WATER_LEVEL;
-water.receiveShadow = true;
 scene.add(water);
-
-function waveHeight(x, z, t) {
-  return (
-    Math.sin(x * 0.08 + t * 0.9) * 0.35 +
-    Math.sin(z * 0.11 + t * 1.3) * 0.25 +
-    Math.sin((x + z) * 0.05 + t * 0.6) * 0.3
-  );
-}
-
-function updateWater(t) {
-  const pos = waterGeo.attributes.position.array;
-  for (let i = 0; i < pos.length; i += 3) {
-    pos[i + 1] = waveHeight(waterBase[i], waterBase[i + 2], t);
-  }
-  waterGeo.attributes.position.needsUpdate = true;
-}
 
 // ---------------------------------------------------------------------------
 // Dock
@@ -172,7 +291,6 @@ addCrate(-1.9, 88, 1.0, 0, 0.5);
 // Lighthouse
 // ---------------------------------------------------------------------------
 const lighthouse = new THREE.Group();
-const LH = { x: -32, z: -30 };
 const segments = 4, segH = 4, rBottom = 3, rTop = 2.1;
 for (let i = 0; i < segments; i++) {
   const r0 = rBottom - ((rBottom - rTop) * i) / segments;
@@ -212,7 +330,9 @@ circleColliders.push({ x: LH.x, z: LH.z, r: rBottom + 0.1 });
 // Trees
 // ---------------------------------------------------------------------------
 const trunkMat = mat(0x6b4a2b);
-const leafMats = [mat(0x3f7f3a), mat(0x4e9442), mat(0x356b30)];
+const leafMats = [0xffffff, 0xd8ebc6, 0xbcd8a4].map(
+  (c) => new THREE.MeshStandardMaterial({ map: leavesTex, color: c, roughness: 0.8 })
+);
 function addTree(x, z) {
   const scale = 0.8 + rand() * 0.7;
   const tree = new THREE.Group();
@@ -221,7 +341,7 @@ function addTree(x, z) {
   tree.add(trunk);
   const leafMat = leafMats[Math.floor(rand() * leafMats.length)];
   for (let i = 0; i < 3; i++) {
-    const cone = shadowed(new THREE.Mesh(new THREE.ConeGeometry(2 - i * 0.5, 2.4, 7), leafMat));
+    const cone = shadowed(new THREE.Mesh(new THREE.ConeGeometry(2 - i * 0.5, 2.4, 9), leafMat));
     cone.position.y = 2.6 + i * 1.2;
     tree.add(cone);
   }
@@ -236,11 +356,11 @@ let placed = 0, attempts = 0;
 while (placed < 45 && attempts < 1000) {
   attempts++;
   const a = rand() * Math.PI * 2;
-  const d = 8 + rand() * (ISLAND_RADIUS - 14);
+  const d = 8 + rand() * 38;
   const x = Math.cos(a) * d, z = Math.sin(a) * d;
-  if (Math.abs(x) < 10 && z > 15) continue;           // keep path to dock clear
-  if (Math.hypot(x - LH.x, z - LH.z) < 8) continue;   // not on the lighthouse
-  if (circleColliders.some(c => Math.hypot(c.x - x, c.z - z) < 3)) continue;
+  if (Math.abs(x) < 10 && z > 0) continue;            // keep the path to the dock clear
+  if (Math.hypot(x - LH.x, z - LH.z) < 9) continue;   // not on the lighthouse
+  if (circleColliders.some((c) => Math.hypot(c.x - x, c.z - z) < 3)) continue;
   addTree(x, z);
   placed++;
 }
@@ -251,7 +371,7 @@ while (placed < 45 && attempts < 1000) {
 const rockMat = mat(0x7b7f86);
 for (let i = 0; i < 25; i++) {
   const a = rand() * Math.PI * 2;
-  const d = ISLAND_RADIUS + 3 + rand() * 12;
+  const d = 66 + rand() * 14;
   const x = Math.cos(a) * d, z = Math.sin(a) * d;
   if (Math.abs(x) < 14 && z > 40) continue; // keep the harbour clear
   const rock = shadowed(new THREE.Mesh(new THREE.DodecahedronGeometry(0.8 + rand() * 1.8, 0), rockMat));
@@ -308,7 +428,7 @@ scene.add(boat);
 // Collision / walkable area
 // ---------------------------------------------------------------------------
 function isWalkable(x, z) {
-  const onIsland = x * x + z * z <= (ISLAND_RADIUS - 1) ** 2;
+  const onIsland = x * x + z * z <= WALK_RADIUS ** 2;
   const onDock =
     x >= DOCK.minX + PLAYER_RADIUS && x <= DOCK.maxX - PLAYER_RADIUS &&
     z >= DOCK.minZ && z <= DOCK.maxZ - PLAYER_RADIUS;
@@ -377,7 +497,7 @@ function updatePlayer(dt) {
   if (canStand(p.x + move.x, p.z)) p.x += move.x;
   if (canStand(p.x, p.z + move.z)) p.z += move.z;
 
-  // Gravity / jumping (ground is flat at y = 0 for now)
+  // Gravity / jumping (walkable ground is flat at y = 0 for now)
   velocityY -= GRAVITY * dt;
   let feetY = p.y - EYE_HEIGHT + velocityY * dt;
   if (feetY <= 0) {
@@ -408,14 +528,15 @@ function animate(now) {
   last = now;
   const t = (now - start) / 1000;
 
-  updateWater(t);
+  water.update(t);
   updatePlayer(dt);
+  sky.position.copy(camera.position);
 
-  // Boat bobs and rolls with the waves
+  // Boat bobs and rocks with the same waves the shader draws
   const h = waveHeight(BOAT_POS.x, BOAT_POS.z, t);
   boat.position.y = WATER_LEVEL + h - 0.2;
-  boat.rotation.z = Math.sin(t * 1.1) * 0.04;
-  boat.rotation.x = (waveHeight(BOAT_POS.x, BOAT_POS.z + 4, t) - waveHeight(BOAT_POS.x, BOAT_POS.z - 4, t)) * 0.08;
+  boat.rotation.x = (waveHeight(BOAT_POS.x, BOAT_POS.z - 4, t) - waveHeight(BOAT_POS.x, BOAT_POS.z + 4, t)) * 0.12;
+  boat.rotation.z = (waveHeight(BOAT_POS.x + 1.5, BOAT_POS.z, t) - waveHeight(BOAT_POS.x - 1.5, BOAT_POS.z, t)) * 0.3;
 
   // Slowly pulse the lighthouse lamp
   lampLight.intensity = 30 + Math.sin(t * 2) * 15;

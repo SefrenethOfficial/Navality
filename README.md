@@ -1,6 +1,6 @@
-# Naval Game (prototype)
+# Navality
 
-A 3D multiplayer naval game built with [three.js](https://threejs.org/). Right now it's a walkable harbour island: an ocean with animated waves, a dock, a moored boat, a lighthouse and trees.
+A 3D multiplayer naval game built with [three.js](https://threejs.org/). Right now it's a walkable harbour island: a custom ocean shader (rolling waves, foam, sun glints, shallow turquoise shallows), a textured island with grass, dirt and sand, a dock, a moored boat, a lighthouse and trees.
 
 ## Controls
 
@@ -36,7 +36,9 @@ Then open the address it prints (e.g. http://localhost:8000).
 ```
 index.html   page, overlay and three.js import map
 style.css    UI styling
-main.js      scene, island, water, player movement and collisions
+main.js      scene, island terrain, props, player movement and collisions
+water.js     ocean shader and wave maths (shared with floating objects)
+textures/    grass, dirt, sand and leaves textures
 ```
 
 ## Roadmap
