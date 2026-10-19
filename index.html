@@ -22,18 +22,48 @@
       <h1>NAVALITY</h1>
       <p class="sub">Harbour prototype</p>
       <p class="start">Click to play</p>
-      <ul>
-        <li><b>W A S D</b> / arrows: move</li>
-        <li><b>Mouse</b>: look</li>
-        <li><b>Shift</b>: sprint</li>
-        <li><b>Space</b>: jump</li>
-        <li><b>Esc</b>: release mouse</li>
-      </ul>
+      <div class="controls">
+        <div>
+          <h2>On foot</h2>
+          <ul>
+            <li><b>W A S D</b> move</li>
+            <li><b>Mouse</b> look</li>
+            <li><b>Shift</b> sprint</li>
+            <li><b>Space</b> jump</li>
+            <li><b>E</b> board boat</li>
+          </ul>
+        </div>
+        <div>
+          <h2>Sailing</h2>
+          <ul>
+            <li><b>W / S</b> raise / lower sail</li>
+            <li><b>A / D</b> steer</li>
+            <li><b>Mouse</b> look around</li>
+            <li><b>Scroll</b> zoom</li>
+            <li><b>E</b> go ashore</li>
+          </ul>
+        </div>
+      </div>
+      <p class="tip">You can't sail straight into the wind. Watch the arrow and sail across it.</p>
+      <p class="tip"><b>Esc</b> releases the mouse</p>
     </div>
   </div>
 
   <div id="crosshair"></div>
   <div id="hud"></div>
+  <div id="prompt" class="hidden"></div>
+
+  <div id="sailhud" class="hidden">
+    <div class="compass">
+      <div id="wind-arrow"></div>
+      <span class="bow">bow</span>
+    </div>
+    <div class="stats">
+      <div><span class="label">Speed</span> <span id="speed">0.0 kn</span></div>
+      <div><span class="label">Sail</span> <span id="sail">0%</span></div>
+      <div id="trim"></div>
+    </div>
+  </div>
 
   <script type="module" src="main.js"></script>
 </body>

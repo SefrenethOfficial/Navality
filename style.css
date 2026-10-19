@@ -34,7 +34,11 @@ canvas { display: block; }
 .panel h1 { margin: 0; font-size: 42px; letter-spacing: 2px; }
 .panel .sub { margin: 4px 0 18px; opacity: 0.7; }
 .panel .start { font-size: 20px; color: #ffd27a; margin: 0 0 14px; }
-.panel ul { list-style: none; padding: 0; margin: 0; line-height: 1.8; text-align: left; }
+.panel .controls { display: flex; gap: 36px; justify-content: center; text-align: left; }
+.panel h2 { margin: 0 0 4px; font-size: 14px; text-transform: uppercase; letter-spacing: 1.5px; color: #8fc9ec; }
+.panel ul { list-style: none; padding: 0; margin: 0; line-height: 1.75; }
+.panel .tip { margin: 14px 0 0; font-size: 13px; opacity: 0.7; }
+.panel .tip + .tip { margin-top: 4px; }
 
 #crosshair {
   position: fixed;
@@ -57,3 +61,78 @@ canvas { display: block; }
   text-shadow: 0 1px 2px #000;
   pointer-events: none;
 }
+
+.hidden { display: none !important; }
+
+#prompt {
+  position: fixed;
+  left: 50%;
+  bottom: 18%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: rgba(10, 30, 48, 0.75);
+  color: #ffe2a8;
+  font-size: 16px;
+  pointer-events: none;
+}
+
+#sailhud {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(10, 30, 48, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #eaf4fb;
+  pointer-events: none;
+}
+#sailhud .compass {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+}
+#sailhud .bow {
+  position: absolute;
+  top: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  opacity: 0.6;
+}
+#wind-arrow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transition: transform 0.15s linear;
+}
+#wind-arrow::before { /* shaft */
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: -18px;
+  width: 4px;
+  height: 36px;
+  background: #8fc9ec;
+  border-radius: 2px;
+}
+#wind-arrow::after { /* head, pointing where the wind blows */
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: -28px;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 12px solid #8fc9ec;
+}
+#sailhud .stats { font-size: 14px; line-height: 1.6; min-width: 150px; }
+#sailhud .label { opacity: 0.6; display: inline-block; width: 46px; }
+#trim { font-size: 12px; color: #ffd27a; }

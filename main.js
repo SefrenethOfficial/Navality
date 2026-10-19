@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { createWater, waveHeight } from './water.js';
+import { createWater } from './water.js';
+import { SailBoat } from './boat.js';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -369,60 +370,49 @@ while (placed < 45 && attempts < 1000) {
 // Rocks in the shallows (decoration only)
 // ---------------------------------------------------------------------------
 const rockMat = mat(0x7b7f86);
+const rocks = []; // { x, z, r } so boats can bump into them
 for (let i = 0; i < 25; i++) {
   const a = rand() * Math.PI * 2;
   const d = 66 + rand() * 14;
   const x = Math.cos(a) * d, z = Math.sin(a) * d;
   if (Math.abs(x) < 14 && z > 40) continue; // keep the harbour clear
-  const rock = shadowed(new THREE.Mesh(new THREE.DodecahedronGeometry(0.8 + rand() * 1.8, 0), rockMat));
+  const size = 0.8 + rand() * 1.8;
+  const rock = shadowed(new THREE.Mesh(new THREE.DodecahedronGeometry(size, 0), rockMat));
   rock.position.set(x, WATER_LEVEL - 0.3, z);
+  rocks.push({ x, z, r: size });
   rock.rotation.set(rand() * 3, rand() * 3, rand() * 3);
   scene.add(rock);
 }
 
 // ---------------------------------------------------------------------------
-// Moored boat (placeholder for the future ship models)
+// Sailboat
 // ---------------------------------------------------------------------------
-function createBoat() {
-  const boat = new THREE.Group();
-  const hull = shadowed(new THREE.Mesh(new THREE.BoxGeometry(3, 1.4, 9), mat(0x6b3b1f)));
-  hull.position.y = 0.3;
-  boat.add(hull);
+const WORLD_RADIUS = 400;
 
-  const bow = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(1.5, 0.2, 1.4, 4, 1), mat(0x6b3b1f)));
-  bow.rotation.y = Math.PI / 4;
-  bow.scale.set(1, 1, 1.6);
-  bow.position.set(0, 0.3, 5.2);
-  boat.add(bow);
-
-  const trim = shadowed(new THREE.Mesh(new THREE.BoxGeometry(3.1, 0.2, 9.1), mat(0xe8e1cf)));
-  trim.position.y = 1.0;
-  boat.add(trim);
-
-  const cabin = shadowed(new THREE.Mesh(new THREE.BoxGeometry(2, 1.2, 2.5), mat(0xe8e1cf)));
-  cabin.position.set(0, 1.6, -2.5);
-  boat.add(cabin);
-
-  const mast = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 7, 8), darkWood));
-  mast.position.set(0, 4.5, 1);
-  boat.add(mast);
-
-  const sail = new THREE.Mesh(
-    new THREE.PlaneGeometry(3.2, 5),
-    new THREE.MeshStandardMaterial({ color: 0xf5f0e1, side: THREE.DoubleSide, roughness: 0.9 })
-  );
-  sail.castShadow = true;
-  sail.rotation.y = Math.PI / 2;
-  sail.position.set(0, 4.6, 2.6);
-  boat.add(sail);
-
-  return boat;
+/** Can a boat hull be at x, z? (deep enough, not hitting the dock or rocks) */
+function isOpenWater(x, z) {
+  const r = Math.hypot(x, z);
+  if (r > WORLD_RADIUS) return false;
+  if (r < shoreStart(x, z) + 6.5) return false; // too shallow near the beach
+  if (x > DOCK.minX - 1.6 && x < DOCK.maxX + 1.6 && z > DOCK.minZ - 1.6 && z < DOCK.maxZ + 1.6) return false;
+  for (const rock of rocks) {
+    if (Math.hypot(x - rock.x, z - rock.z) < rock.r + 1.3) return false;
+  }
+  return true;
 }
 
-const boat = createBoat();
-const BOAT_POS = { x: 6.2, z: 78 };
-boat.position.set(BOAT_POS.x, WATER_LEVEL, BOAT_POS.z);
-scene.add(boat);
+const boat = new SailBoat({
+  x: 6.2, z: 78, heading: 0,
+  waterLevel: WATER_LEVEL, mat, darkWood, isOpenWater,
+});
+scene.add(boat.mesh);
+
+// Wind slowly shifts direction and strength. angle = direction it blows TO.
+const wind = { angle: 0, strength: 1 };
+function updateWind(t) {
+  wind.angle = Math.PI * 0.5 + Math.sin(t * 0.03) * 0.35;
+  wind.strength = 0.85 + Math.sin(t * 0.07) * 0.15;
+}
 
 // ---------------------------------------------------------------------------
 // Collision / walkable area
@@ -455,24 +445,111 @@ const canStand = (x, z) => isWalkable(x, z) && !collides(x, z);
 const controls = new PointerLockControls(camera, document.body);
 const overlay = document.getElementById('overlay');
 const hud = document.getElementById('hud');
+const promptEl = document.getElementById('prompt');
+const sailHud = document.getElementById('sailhud');
+const windArrow = document.getElementById('wind-arrow');
+const speedEl = document.getElementById('speed');
+const sailEl = document.getElementById('sail');
+const trimEl = document.getElementById('trim');
+const crosshair = document.getElementById('crosshair');
 
 overlay.addEventListener('click', () => controls.lock());
 controls.addEventListener('lock', () => overlay.classList.add('hidden'));
 controls.addEventListener('unlock', () => overlay.classList.remove('hidden'));
 
+let mode = 'walk'; // 'walk' or 'sail'
 const keys = {};
 let velocityY = 0;
 let onGround = true;
 
+// Chase camera (used while sailing)
+const chase = { yaw: 0, pitch: 0.32, dist: 18 };
+const camTarget = new THREE.Vector3();
+
 window.addEventListener('keydown', (e) => {
   keys[e.code] = true;
-  if (e.code === 'Space' && onGround && controls.isLocked) {
+  if (!controls.isLocked) return;
+  if (e.code === 'Space' && mode === 'walk' && onGround) {
     velocityY = JUMP_SPEED;
     onGround = false;
+  }
+  if (e.code === 'KeyE' && !e.repeat) {
+    if (mode === 'walk' && nearBoat()) board();
+    else if (mode === 'sail') disembark();
   }
 });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
+document.addEventListener('mousemove', (e) => {
+  if (mode !== 'sail' || !controls.isLocked) return;
+  chase.yaw -= e.movementX * 0.003;
+  chase.pitch = THREE.MathUtils.clamp(chase.pitch + e.movementY * 0.003, 0.05, 1.3);
+});
+document.addEventListener('wheel', (e) => {
+  if (mode !== 'sail') return;
+  chase.dist = THREE.MathUtils.clamp(chase.dist + e.deltaY * 0.02, 9, 40);
+});
+
+// ---------------------------------------------------------------------------
+// Boarding / going ashore
+// ---------------------------------------------------------------------------
+let messageUntil = 0;
+let message = '';
+function flash(text, seconds = 2) {
+  message = text;
+  messageUntil = performance.now() + seconds * 1000;
+}
+
+function nearBoat() {
+  const p = camera.position;
+  return Math.hypot(p.x - boat.x, p.z - boat.z) < 7;
+}
+
+function board() {
+  mode = 'sail';
+  controls.enabled = false;
+  chase.yaw = 0;
+  chase.pitch = 0.32;
+  sailHud.classList.remove('hidden');
+  crosshair.classList.add('hidden');
+}
+
+/** Closest spot on land (island or dock) the player could stand, or null. */
+function nearestLanding(x, z) {
+  const candidates = [];
+  const r = Math.hypot(x, z) || 1;
+  const k = (WALK_RADIUS - 1) / r;
+  candidates.push({ x: x * k, z: z * k });
+  candidates.push({
+    x: THREE.MathUtils.clamp(x, DOCK.minX + 0.6, DOCK.maxX - 0.6),
+    z: THREE.MathUtils.clamp(z, DOCK.minZ + 0.6, DOCK.maxZ - 0.6),
+  });
+  let best = null, bestDist = Infinity;
+  for (const c of candidates) {
+    const d = Math.hypot(c.x - x, c.z - z);
+    if (d < bestDist && canStand(c.x, c.z)) { best = c; bestDist = d; }
+  }
+  return best && bestDist < 15 ? best : null;
+}
+
+function disembark() {
+  const spot = nearestLanding(boat.x, boat.z);
+  if (!spot) {
+    flash('Too far from land. Sail closer to the dock or beach.');
+    return;
+  }
+  mode = 'walk';
+  controls.enabled = true;
+  sailHud.classList.add('hidden');
+  crosshair.classList.remove('hidden');
+  velocityY = 0;
+  camera.position.set(spot.x, EYE_HEIGHT, spot.z);
+  camera.lookAt(boat.x, EYE_HEIGHT, boat.z);
+}
+
+// ---------------------------------------------------------------------------
+// Walking
+// ---------------------------------------------------------------------------
 const forward = new THREE.Vector3();
 const right = new THREE.Vector3();
 const move = new THREE.Vector3();
@@ -509,6 +586,39 @@ function updatePlayer(dt) {
 }
 
 // ---------------------------------------------------------------------------
+// Sailing
+// ---------------------------------------------------------------------------
+function sailInput() {
+  if (mode !== 'sail' || !controls.isLocked) return null;
+  return {
+    sail: (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0),
+    steer: (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0),
+  };
+}
+
+function updateChaseCamera(dt) {
+  const yaw = boat.heading + chase.yaw;
+  const horiz = Math.cos(chase.pitch) * chase.dist;
+  camTarget.set(
+    boat.x - Math.sin(yaw) * horiz,
+    WATER_LEVEL + 2 + Math.sin(chase.pitch) * chase.dist,
+    boat.z - Math.cos(yaw) * horiz
+  );
+  camera.position.lerp(camTarget, Math.min(1, dt * 5));
+  camera.lookAt(boat.x, WATER_LEVEL + 3, boat.z);
+}
+
+function updateSailHud() {
+  const rel = Math.atan2(Math.sin(wind.angle - boat.heading), Math.cos(wind.angle - boat.heading));
+  // Arrow shows where the wind blows, relative to the bow (up = toward the bow)
+  windArrow.style.transform = `rotate(${(-rel * 180) / Math.PI}deg)`;
+  speedEl.textContent = `${(Math.max(boat.speed, 0) * 1.944).toFixed(1)} kn`;
+  sailEl.textContent = `${Math.round(boat.sailLevel * 100)}%`;
+  const e = boat.efficiency;
+  trimEl.textContent = e < 0.05 ? 'In irons (too close to the wind)' : e > 0.9 ? 'Great angle' : e > 0.75 ? 'Good angle' : 'Weak angle';
+}
+
+// ---------------------------------------------------------------------------
 // Resize
 // ---------------------------------------------------------------------------
 window.addEventListener('resize', () => {
@@ -529,19 +639,29 @@ function animate(now) {
   const t = (now - start) / 1000;
 
   water.update(t);
-  updatePlayer(dt);
+  updateWind(t);
+  boat.update(dt, t, wind, sailInput());
+
+  if (mode === 'walk') {
+    updatePlayer(dt);
+  } else {
+    updateChaseCamera(dt);
+    updateSailHud();
+  }
   sky.position.copy(camera.position);
 
-  // Boat bobs and rocks with the same waves the shader draws
-  const h = waveHeight(BOAT_POS.x, BOAT_POS.z, t);
-  boat.position.y = WATER_LEVEL + h - 0.2;
-  boat.rotation.x = (waveHeight(BOAT_POS.x, BOAT_POS.z - 4, t) - waveHeight(BOAT_POS.x, BOAT_POS.z + 4, t)) * 0.12;
-  boat.rotation.z = (waveHeight(BOAT_POS.x + 1.5, BOAT_POS.z, t) - waveHeight(BOAT_POS.x - 1.5, BOAT_POS.z, t)) * 0.3;
+  // Interaction prompt
+  let promptText = '';
+  if (now < messageUntil) promptText = message;
+  else if (mode === 'walk' && nearBoat()) promptText = 'Press E to board';
+  else if (mode === 'sail' && nearestLanding(boat.x, boat.z)) promptText = 'Press E to go ashore';
+  promptEl.textContent = promptText;
+  promptEl.classList.toggle('hidden', !promptText || !controls.isLocked);
 
   // Slowly pulse the lighthouse lamp
   lampLight.intensity = 30 + Math.sin(t * 2) * 15;
 
-  const p = camera.position;
+  const p = mode === 'walk' ? camera.position : boat;
   hud.textContent = `x ${p.x.toFixed(1)}  z ${p.z.toFixed(1)}`;
 
   renderer.render(scene, camera);

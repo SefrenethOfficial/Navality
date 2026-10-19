@@ -4,13 +4,36 @@ A 3D multiplayer naval game built with [three.js](https://threejs.org/). Right n
 
 ## Controls
 
+**On foot**
+
 | Key | Action |
 | --- | --- |
 | W A S D / arrows | Move |
 | Mouse | Look |
 | Shift | Sprint |
 | Space | Jump |
-| Esc | Release mouse |
+| E | Board the boat (when standing near it) |
+
+**Sailing**
+
+| Key | Action |
+| --- | --- |
+| W / S | Raise / lower the sail |
+| A / D | Steer left / right |
+| Mouse | Orbit the camera |
+| Scroll | Zoom |
+| E | Go ashore (when near the dock or beach) |
+
+Esc releases the mouse.
+
+## Sailing
+
+The wind slowly shifts direction and strength. The arrow in the bottom-right shows which way it's blowing relative to your bow, and the red flag on the mast shows it in the world.
+
+- You can't sail straight into the wind: within about 35° of it the boat stalls ("in irons").
+- You're fastest with the wind coming from the side (a beam reach).
+- The boom swings out automatically and the boat leans away from the wind.
+- You bounce off the beach, the dock and rocks.
 
 ## Running locally
 
@@ -36,7 +59,8 @@ Then open the address it prints (e.g. http://localhost:8000).
 ```
 index.html   page, overlay and three.js import map
 style.css    UI styling
-main.js      scene, island terrain, props, player movement and collisions
+main.js      scene, island terrain, props, walking, boarding and the chase camera
+boat.js      sailboat model and sailing physics
 water.js     ocean shader and wave maths (shared with floating objects)
 textures/    grass, dirt, sand and leaves textures
 ```
@@ -44,6 +68,6 @@ textures/    grass, dirt, sand and leaves textures
 ## Roadmap
 
 - [x] Walkable 3D world
-- [ ] Boardable, steerable ships
+- [x] Basic sailing
 - [ ] Multiplayer (e.g. Node.js + WebSockets server)
 - [ ] Naval combat
